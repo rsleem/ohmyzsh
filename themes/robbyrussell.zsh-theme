@@ -1,6 +1,9 @@
 PROMPT="%(?:%{$fg_bold[green]%}➜ :%{$fg_bold[red]%}➜ )"
 # PROMPT+=' %{$fg[cyan]%}%c%{$reset_color%} $(git_prompt_info)'
-PROMPT+=$' %{$fg[cyan]%}%d%{$reset_color%} $(git_prompt_info)\n'
+# PROMPT+=$' %F{cyan}(pyenv:$(pyenv version-name)) '
+PROMPT+=$'%F{cyan}(condav:$CONDA_DEFAULT_ENV) '
+PROMPT+=$'%F{yellow}[jenv:$(jenv version-name)] '
+PROMPT+=$'%{$fg[cyan]%}%d%{$reset_color%} $(git_prompt_info)\n'
 PROMPT+='%{$fg_bold[yellow]%}➜ %{$reset_color%}'
 RPROMPT='%{$fg[cyan]%} [%D{%m/%f/%y}|%@] %{$reset_color%}'
 
