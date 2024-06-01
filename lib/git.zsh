@@ -1,3 +1,5 @@
+autoload -Uz is-at-least
+
 # The git prompt's git commands are read-only and should not interfere with
 # other processes. This environment variable is equivalent to running with `git
 # --no-optional-locks`, but falls back gracefully for older versions of git.
@@ -9,15 +11,79 @@ function __git_prompt_git() {
   GIT_OPTIONAL_LOCKS=0 command git "$@"
 }
 
-# Outputs current branch info in prompt format
-function git_prompt_info() {
-  local ref
-  if [[ "$(__git_prompt_git config --get oh-my-zsh.hide-status 2>/dev/null)" != "1" ]]; then
-    ref=$(__git_prompt_git symbolic-ref HEAD 2> /dev/null) || \
-    ref=$(__git_prompt_git rev-parse --short HEAD 2> /dev/null) || return 0
-    echo "$ZSH_THEME_GIT_PROMPT_PREFIX${ref#refs/heads/}$(parse_git_dirty)$ZSH_THEME_GIT_PROMPT_SUFFIX"
+function _omz_git_prompt_info() {
+  # If we are on a folder not tracked by git, get out.
+  # Otherwise, check for hide-info at global and local repository level
+  if ! __git_prompt_git rev-parse --git-dir &> /dev/null \
+    || [[ "$(__git_prompt_git config --get oh-my-zsh.hide-info 2>/dev/null)" == 1 ]]; then
+    return 0
   fi
+
+  # Get either:
+  # - the current branch name
+  # - the tag name if we are on a tag
+  # - the short SHA of the current commit
+  local ref
+  ref=$(__git_prompt_git symbolic-ref --short HEAD 2> /dev/null) \
+  || ref=$(__git_prompt_git describe --tags --exact-match HEAD 2> /dev/null) \
+  || ref=$(__git_prompt_git rev-parse --short HEAD 2> /dev/null) \
+  || return 0
+
+  # Use global ZSH_THEME_GIT_SHOW_UPSTREAM=1 for including upstream remote info
+  local upstream
+  if (( ${+ZSH_THEME_GIT_SHOW_UPSTREAM} )); then
+    upstream=$(__git_prompt_git rev-parse --abbrev-ref --symbolic-full-name "@{upstream}" 2>/dev/null) \
+    && upstream=" -> ${upstream}"
+  fi
+
+  echo "${ZSH_THEME_GIT_PROMPT_PREFIX}${ref:gs/%/%%}${upstream:gs/%/%%}$(parse_git_dirty)${ZSH_THEME_GIT_PROMPT_SUFFIX}"
 }
+
+# Use async version if setting is enabled or undefined
+if zstyle -T ':omz:alpha:lib:git' async-prompt; then
+  function git_prompt_info() {
+    if [[ -n "${_OMZ_ASYNC_OUTPUT[_omz_git_prompt_info]}" ]]; then
+      echo -n "${_OMZ_ASYNC_OUTPUT[_omz_git_prompt_info]}"
+    fi
+  }
+
+  function git_prompt_status() {
+    if [[ -n "${_OMZ_ASYNC_OUTPUT[_omz_git_prompt_status]}" ]]; then
+      echo -n "${_OMZ_ASYNC_OUTPUT[_omz_git_prompt_status]}"
+    fi
+  }
+
+  # Conditionally register the async handler, only if it's needed in $PROMPT
+  # or any of the other prompt variables
+  function _defer_async_git_register() {
+    # Check if git_prompt_info is used in a prompt variable
+    case "${PS1}:${PS2}:${PS3}:${PS4}:${RPROMPT}:${RPS1}:${RPS2}:${RPS3}:${RPS4}" in
+    *(\$\(git_prompt_info\)|\`git_prompt_info\`)*)
+      _omz_register_handler _omz_git_prompt_info
+      ;;
+    esac
+
+    case "${PS1}:${PS2}:${PS3}:${PS4}:${RPROMPT}:${RPS1}:${RPS2}:${RPS3}:${RPS4}" in
+    *(\$\(git_prompt_status\)|\`git_prompt_status\`)*)
+      _omz_register_handler _omz_git_prompt_status
+      ;;
+    esac
+
+    add-zsh-hook -d precmd _defer_async_git_register
+    unset -f _defer_async_git_register
+  }
+
+  # Register the async handler first. This needs to be done before
+  # the async request prompt is run
+  precmd_functions=(_defer_async_git_register $precmd_functions)
+else
+  function git_prompt_info() {
+    _omz_git_prompt_info
+  }
+  function git_prompt_status() {
+    _omz_git_prompt_status
+  }
+fi
 
 # Checks if working tree is dirty
 function parse_git_dirty() {
@@ -38,7 +104,7 @@ function parse_git_dirty() {
         FLAGS+="--ignore-submodules=${GIT_STATUS_IGNORE_SUBMODULES:-dirty}"
         ;;
     esac
-    STATUS=$(__git_prompt_git status ${FLAGS} 2> /dev/null | tail -n1)
+    STATUS=$(__git_prompt_git status ${FLAGS} 2> /dev/null | tail -n 1)
   fi
   if [[ -n $STATUS ]]; then
     echo "$ZSH_THEME_GIT_PROMPT_DIRTY"
@@ -69,7 +135,7 @@ function git_remote_status() {
         fi
 
         if [[ -n $ZSH_THEME_GIT_PROMPT_REMOTE_STATUS_DETAILED ]]; then
-            git_remote_status="$ZSH_THEME_GIT_PROMPT_REMOTE_STATUS_PREFIX$remote$git_remote_status_detailed$ZSH_THEME_GIT_PROMPT_REMOTE_STATUS_SUFFIX"
+            git_remote_status="$ZSH_THEME_GIT_PROMPT_REMOTE_STATUS_PREFIX${remote:gs/%/%%}$git_remote_status_detailed$ZSH_THEME_GIT_PROMPT_REMOTE_STATUS_SUFFIX"
         fi
 
         echo $git_remote_status
@@ -147,7 +213,7 @@ function git_prompt_long_sha() {
   SHA=$(__git_prompt_git rev-parse HEAD 2> /dev/null) && echo "$ZSH_THEME_GIT_PROMPT_SHA_BEFORE$SHA$ZSH_THEME_GIT_PROMPT_SHA_AFTER"
 }
 
-function git_prompt_status() {
+function _omz_git_prompt_status() {
   [[ "$(__git_prompt_git config --get oh-my-zsh.hide-status 2>/dev/null)" = 1 ]] && return
 
   # Maps a git status prefix to an internal constant
@@ -157,7 +223,7 @@ function git_prompt_status() {
     '\?\? '     'UNTRACKED'
     'A  '       'ADDED'
     'M  '       'ADDED'
-    'MM '       'ADDED'
+    'MM '       'MODIFIED'
     ' M '       'MODIFIED'
     'AM '       'MODIFIED'
     ' T '       'MODIFIED'
@@ -193,7 +259,8 @@ function git_prompt_status() {
     STASHED UNMERGED AHEAD BEHIND DIVERGED
   )
 
-  local status_text="$(__git_prompt_git status --porcelain -b 2> /dev/null)"
+  local status_text
+  status_text="$(__git_prompt_git status --porcelain -b 2> /dev/null)"
 
   # Don't continue on a catastrophic failure
   if [[ $? -eq 128 ]]; then
